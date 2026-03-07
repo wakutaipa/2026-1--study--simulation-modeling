@@ -1,0 +1,154 @@
+using DrWatson
+@quickactivate "project"
+
+using DifferentialEquations
+using SimpleDiffEq
+using Tables
+using DataFrames
+using StatsPlots
+using LaTeXStrings
+using Plots
+using BenchmarkTools
+
+script_name = splitext(basename(PROGRAM_FILE))[1]
+mkpath(plotsdir(script_name))
+mkpath(datadir(script_name))
+
+function sir_ode!(du, u, p, t)
+	(S, I, R) = u
+	(β, c, γ) = p
+	N = S + I + R
+	@inbounds begin
+		du[1] = -β * c * I / N * S
+		du[2] = β * c * I / N * S - γ * I
+		du[3] = γ * I
+	end
+	nothing
+end
+
+δt = 0.1
+tmax = 40.0
+tspan = (0.0, tmax)
+u0 = [990.0, 10.0, 0.0]  # S, I, R
+
+parameter_sets = [
+    [0.05, 20.0, 0.25],  # Низкая передача
+    [0.10, 20.0, 0.25],  # Средняя передача (базовый)
+    [0.15, 20.0, 0.25],  # Высокая передача
+    [0.10, 15.0, 0.25],  # Уменьшенные контакты
+    [0.10, 25.0, 0.25],  # Увеличенные контакты
+    [0.10, 20.0, 0.15],  # Более долгое выздоровление
+    [0.10, 20.0, 0.35],  # Более быстрое выздоровление
+]
+
+results = []
+
+for (idx, p) in enumerate(parameter_sets)
+    R0 = (p[2] * p[1]) / p[3]
+    prob_ode = ODEProblem(sir_ode!, u0, tspan, p)
+    sol_ode = solve(prob_ode, dt = δt)
+    df_ode = DataFrame(Tables.table(sol_ode'))
+    rename!(df_ode, ["S", "I", "R"])
+    df_ode[!, :t] = sol_ode.t
+    df_ode[!, :N] = df_ode.S + df_ode.I + df_ode.R
+    df_ode[!, :R0] .= R0
+    df_ode[!, :Re] = R0 .* df_ode.S ./ df_ode.N
+    df_ode[!, :сценарий] .= "Набор $idx"
+    push!(results, df_ode)
+    println("\n=== НАБОР ПАРАМЕТРОВ $idx ===")
+    println("β (вероятность заражения) = ", p[1])
+    println("c (среднее число контактов) = ", p[2])
+    println("γ (скорость выздоровления) = ", p[3])
+    println("R0 = c * β / γ = ", round(R0, digits=3))
+    println("Средняя продолжительность болезни = ", round(1/p[3], digits=2), " дней")
+    peak_idx = argmax(df_ode.I)
+    peak_time = df_ode.t[peak_idx]
+    peak_value = df_ode.I[peak_idx]
+    println("Пиковое число зараженных: I_max = ", round(peak_value, digits=1))
+    println("Время достижения пика: t_peak = ", round(peak_time, digits=1), " дней")
+    println("Итоговое число переболевших: R(inf) = ", round(df_ode.R[end], digits=1))
+    println("Доля переболевших: ", round(df_ode.R[end]/df_ode.N[1]*100, digits=1), "%")
+
+    if R0 > 1
+        println("Теоретический порог коллективного иммунитета: ", round((1-1/R0)*100, digits=1), "%")
+    end
+end
+
+using Serialization
+serialize(datadir(script_name, "all_results.jls"), results)
+
+combined_df = vcat(results...)
+
+plt_compare_I = plot(xlabel="Время, дни", ylabel="Количество зараженных",
+                     title="Сравнение кривых зараженных", size=(800, 500), legend=:topright)
+for (idx, df) in enumerate(results)
+    plot!(plt_compare_I, df.t, df.I, label="Набор $idx (R0=$(round(df.R0[1], digits=2)))", linewidth=2)
+end
+savefig(plt_compare_I, plotsdir(script_name, "comparison_infected.png"))
+
+plt_compare_Re = plot(xlabel="Время, дни", ylabel=L"R_e",
+                      title="Сравнение эффективного репродуктивного числа", size=(800, 500))
+hline!(plt_compare_Re, [1.0], color=:red, linestyle=:dash, label="Порог эпидемии (Rₑ=1)", linewidth=1.5)
+for (idx, df) in enumerate(results)
+    plot!(plt_compare_Re, df.t, df.Re, label="Набор $idx (R0=$(round(df.R0[1], digits=2)))", linewidth=2)
+end
+savefig(plt_compare_Re, plotsdir(script_name, "comparison_Re.png"))
+
+plt_all = plot(layout=(2, 3), size=(1200, 800))
+base_idx = 2  # Базовый набор
+
+plot!(plt_all[1], results[base_idx].t, results[base_idx].S, label=L"S(t)", color=1, linewidth=2, title="Восприимчивые")
+plot!(plt_all[2], results[base_idx].t, results[base_idx].I, label=L"I(t)", color=2, linewidth=2, title="Зараженные")
+plot!(plt_all[3], results[base_idx].t, results[base_idx].R, label=L"R(t)", color=3, linewidth=2, title="Выздоровевшие")
+plot!(plt_all[4], results[base_idx].t, results[base_idx].I, label=L"I(t)", color=2, linewidth=2, yscale=:log10, title="Лог. масштаб")
+plot!(plt_all[5], results[base_idx].S, results[base_idx].I, label=false, color=4, linewidth=2, title="Фазовый портрет", xlabel=L"S", ylabel=L"I")
+plot!(plt_all[6], results[base_idx].t, results[base_idx].Re, label=L"R_e", color=:green, linewidth=2, title=L"R_e(t)")
+hline!(plt_all[6], [1.0], linestyle=:dash, linecolor=:red, label=false)
+savefig(plt_all, plotsdir(script_name, "sir_panel_base.png"))
+
+summary_stats = DataFrame(
+    сценарий = ["Набор $i" for i in 1:length(parameter_sets)],
+    β = [p[1] for p in parameter_sets],
+    c = [p[2] for p in parameter_sets],
+    γ = [p[3] for p in parameter_sets],
+    R0 = [(p[2]*p[1])/p[3] for p in parameter_sets],
+    пик_зараженных = [maximum(df.I) for df in results],
+    время_пика = [df.t[argmax(df.I)] for df in results],
+    итог_переболевших = [df.R[end] for df in results],
+    доля_переболевших = [df.R[end]/df.N[1]*100 for df in results]
+)
+
+using CSV
+CSV.write(datadir(script_name, "summary_stats.csv"), summary_stats)
+
+println("\n=== СВОДНАЯ СТАТИСТИКА ===")
+println(summary_stats)
+
+scenarios = 1:length(parameter_sets)
+β_values = [p[1] for p in parameter_sets]
+γ_values = [p[3] for p in parameter_sets]
+R0_values = summary_stats.R0
+
+plt_heatmap = scatter(β_values, γ_values,
+                      zcolor=R0_values,
+                      xlabel="β (вероятность заражения)",
+                      ylabel="γ (скорость выздоровления)",
+                      title="Значения R0 для разных комбинаций параметров",
+                      label="R0",
+                      size=(600, 400))
+savefig(plt_heatmap, plotsdir(script_name, "R0_heatmap.png"))
+
+plt_fraction = bar(1:length(results),
+                   [df.R[end]/df.N[1]*100 for df in results],
+                   xlabel="Набор параметров",
+                   ylabel="Доля переболевших, %",
+                   title="Сравнение итоговой доли переболевших",
+                   label="% переболевших",
+                   color=:steelblue,
+                   size=(800, 400))
+hline!(plt_fraction, [100*(1-1/mean([p[2]*p[1]/p[3] for p in parameter_sets if p[2]*p[1]/p[3] > 1]))],
+       color=:red, linestyle=:dash, label="Средний порог иммунитета")
+savefig(plt_fraction, plotsdir(script_name, "comparison_fraction.png"))
+
+println("\nВсе симуляции завершены. Результаты сохранены в:", datadir(script_name))
+println("Графики сохранены в:", plotsdir(script_name))
