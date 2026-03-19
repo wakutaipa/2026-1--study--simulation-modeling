@@ -1,3 +1,7 @@
+# [1.0.0](https://gitverse.ru/2222/wakutaipa/2026-1--study--simulation-modelling/compare/1.3.1...1.0.0) (2026-03-19)
+
+
+
 # 1.0.0 (2026-03-17)
 
 
