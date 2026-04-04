@@ -1,3 +1,12 @@
+# [1.0.0](https://gitverse.ru/2222/wakutaipa/2026-1--study--simulation-modelling/compare/1.4.0...1.0.0) (2026-04-04)
+
+
+### Features
+
+* **lab04:** added lab04 ([3d28772](https://gitverse.ru/2222/wakutaipa/2026-1--study--simulation-modelling/commits/3d287722c46f853d5a532aca707421a0e4e959f5))
+
+
+
 # [1.0.0](https://gitverse.ru/2222/wakutaipa/2026-1--study--simulation-modelling/compare/2.0.0...1.0.0) (2026-04-04)
 
 
