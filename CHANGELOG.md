@@ -9,7 +9,7 @@
 * **lab03:** added lab03 ([6a518a0](https://gitverse.ru/2222/wakutaipa/2026-1--study--simulation-modelling/commits/6a518a05b9e725248827219d4d3911e0f17f20bc))
 * **lab04:** added lab04 ([3d28772](https://gitverse.ru/2222/wakutaipa/2026-1--study--simulation-modelling/commits/3d287722c46f853d5a532aca707421a0e4e959f5))
 * **lab04:** added lab04 ([cdf5167](https://gitverse.ru/2222/wakutaipa/2026-1--study--simulation-modelling/commits/cdf5167ad5f482f64f733c26b7961ff98aa73647))
-* **main:** added lab05 files ([e30340b](https://gitverse.ru/2222/wakutaipa/2026-1--study--simulation-modelling/commits/e30340b56b1e8eb2a2baa2e1f166d696ea8a8526))
+* **lab05:** added lab05 files ([e30340b](https://gitverse.ru/2222/wakutaipa/2026-1--study--simulation-modelling/commits/e30340b56b1e8eb2a2baa2e1f166d696ea8a8526))
 
 
 
