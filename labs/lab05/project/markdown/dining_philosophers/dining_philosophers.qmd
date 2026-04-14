@@ -1,0 +1,175 @@
+```{julia}
+{
+ "cells": [
+  {
+   "cell_type": "code",
+   "execution_count": 8,
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stderr",
+     "output_type": "stream",
+     "text": [
+      "WARNING: replacing module DiningPhilosophers.\n",
+      "WARNING: using DiningPhilosophers.build_classical_network in module Main conflicts with an existing identifier.\n",
+      "WARNING: using DiningPhilosophers.build_arbiter_network in module Main conflicts with an existing identifier.\n",
+      "WARNING: using DiningPhilosophers.simulate_stochastic in module Main conflicts with an existing identifier.\n",
+      "WARNING: using DiningPhilosophers.detect_deadlock in module Main conflicts with an existing identifier.\n",
+      "WARNING: using DiningPhilosophers.plot_marking_evolution in module Main conflicts with an existing identifier.\n"
+     ]
+    },
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "\n",
+      "=== Запуск симуляции для N=7, tmax=30.0  ===\n",
+      "=== Классическая сеть без арбитра ===\n",
+      "Deadlock обнаружен: true\n",
+      "\n",
+      "=== Сеть с арбитром ===\n",
+      "Deadlock обнаружен: false\n",
+      "\n",
+      "=== Запуск симуляции для N=9, tmax=50.0  ===\n",
+      "=== Классическая сеть без арбитра ===\n",
+      "Deadlock обнаружен: true\n",
+      "\n",
+      "=== Сеть с арбитром ===\n",
+      "Deadlock обнаружен: false\n",
+      "\n",
+      "=== Запуск симуляции для N=11, tmax=80.0  ===\n",
+      "=== Классическая сеть без арбитра ===\n",
+      "Deadlock обнаружен: true\n",
+      "\n",
+      "=== Сеть с арбитром ===\n",
+      "Deadlock обнаружен: false\n",
+      "\n",
+      "=== Сводка всех симуляций ===\n",
+      "\u001b[1m3×4 DataFrame\u001b[0m\n",
+      "\u001b[1m Row \u001b[0m│\u001b[1m N     \u001b[0m\u001b[1m tmax    \u001b[0m\u001b[1m classic_deadlock \u001b[0m\u001b[1m arbiter_deadlock \u001b[0m\n",
+      "\u001b[1m     \u001b[0m│\u001b[90m Int64 \u001b[0m\u001b[90m Float64 \u001b[0m\u001b[90m Bool             \u001b[0m\u001b[90m Bool             \u001b[0m\n",
+      "─────┼────────────────────────────────────────────────────\n",
+      "   1 │     7     30.0              true             false\n",
+      "   2 │     9     50.0              true             false\n",
+      "   3 │    11     80.0              true             false\n"
+     ]
+    }
+   ],
+   "source": [
+    "@quickactivate \"project\"\n",
+    "include(srcdir(\"DiningPhilosophers.jl\"))\n",
+    "using .DiningPhilosophers\n",
+    "using DataFrames, CSV, Plots\n",
+    "\n",
+    "# Определение конфигураций параметров\n",
+    "params_list = [\n",
+    "    (N = 7, tmax = 30.0),\n",
+    "    (N = 9, tmax = 50.0),\n",
+    "    (N = 11, tmax = 80.0)\n",
+    "]\n",
+    "\n",
+    "# Функция для запуска симуляции для одного набора параметров\n",
+    "function run_simulation(params)\n",
+    "    N = params.N\n",
+    "    tmax = params.tmax\n",
+    "    \n",
+    "    println(\"\\n=== Запуск симуляции для N=$N, tmax=$tmax  ===\")\n",
+    "    \n",
+    "    println(\"=== Классическая сеть без арбитра ===\")\n",
+    "    net_classic, u0_classic, _ = build_classical_network(N)\n",
+    "    \n",
+    "    # Использование DrWatson для сохранения данных\n",
+    "    sim_name = \"dining_classic_N$(N)\"\n",
+    "    df_classic = simulate_stochastic(net_classic, u0_classic, tmax)\n",
+    "    CSV.write(datadir(\"$(sim_name).csv\"), df_classic)\n",
+    "    \n",
+    "    dead = detect_deadlock(df_classic, net_classic)\n",
+    "    println(\"Deadlock обнаружен: $dead\")\n",
+    "    \n",
+    "    plot_classic = plot_marking_evolution(df_classic, N)\n",
+    "    savefig(plotsdir(\"classic_simulation_N$(N)_.png\"))\n",
+    "    \n",
+    "    # Сеть с арбитром\n",
+    "    println(\"\\n=== Сеть с арбитром ===\")\n",
+    "    net_arb, u0_arb, _ = build_arbiter_network(N)\n",
+    "    df_arb = simulate_stochastic(net_arb, u0_arb, tmax)\n",
+    "    \n",
+    "    sim_name_arb = \"dining_arbiter_N$(N)_\"\n",
+    "    CSV.write(datadir(\"$(sim_name_arb).csv\"), df_arb)\n",
+    "    \n",
+    "    dead_arb = detect_deadlock(df_arb, net_arb)\n",
+    "    println(\"Deadlock обнаружен: $dead_arb\")\n",
+    "    \n",
+    "    plot_arb = plot_marking_evolution(df_arb, N)\n",
+    "    savefig(plotsdir(\"arbiter_simulation_N$(N)_.png\"))\n",
+    "    \n",
+    "    # Возврат результатов в виде словаря (совместимо с DrWatson)\n",
+    "    return Dict(\n",
+    "        :params => params,\n",
+    "        :classic_deadlock => dead,\n",
+    "        :arbiter_deadlock => dead_arb,\n",
+    "        :classic_data => df_classic,\n",
+    "        :arbiter_data => df_arb\n",
+    "    )\n",
+    "end\n",
+    "\n",
+    "# Запуск симуляций для всех наборов параметров\n",
+    "results = []\n",
+    "for params in params_list\n",
+    "    result = run_simulation(params)\n",
+    "    push!(results, result)\n",
+    "end\n",
+    "\n",
+    "# Опционально: сохранение сводки результатов\n",
+    "summary_df = DataFrame([\n",
+    "    (N = r[:params].N, \n",
+    "     tmax = r[:params].tmax,\n",
+    "     classic_deadlock = r[:classic_deadlock],\n",
+    "     arbiter_deadlock = r[:arbiter_deadlock]) \n",
+    "    for r in results\n",
+    "])\n",
+    "CSV.write(datadir(\"simulation_summary.csv\"), summary_df)\n",
+    "println(\"\\n=== Сводка всех симуляций ===\")\n",
+    "println(summary_df)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": []
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": []
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": []
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Julia 1.10",
+   "language": "julia",
+   "name": "julia-1.10"
+  },
+  "language_info": {
+   "file_extension": ".jl",
+   "mimetype": "application/julia",
+   "name": "julia",
+   "version": "1.10.10"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 4
+}
+```
+
