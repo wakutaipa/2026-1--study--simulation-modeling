@@ -1,3 +1,12 @@
+# [1.0.0](https://gitverse.ru/2222/wakutaipa/2026-1--study--simulation-modelling/compare/1.6.0...1.0.0) (2026-05-15)
+
+
+### Features
+
+* **main:** added lab7 files ([5aa8f32](https://gitverse.ru/2222/wakutaipa/2026-1--study--simulation-modelling/commits/5aa8f3287f5d29fe3ac655e9a4c9e7a789b362b2))
+
+
+
 # [1.0.0](https://gitverse.ru/2222/wakutaipa/2026-1--study--simulation-modelling/compare/1.5.0...1.0.0) (2026-04-30)
 
 

@@ -1,0 +1,306 @@
+using DrWatson
+@quickactivate "project"
+
+using ResumableFunctions, ConcurrentSim, Distributions, StableRNGs
+using Statistics, Plots, DataFrames
+
+const RUNS = 10 
+const N = 10         
+const S = 3          
+const LAMBDA = 100.0      
+const MU = 1.0        
+const SEED = 42
+
+struct StopSimulation <: Exception
+    msg::String
+end
+
+mutable struct SystemState
+    operational::Int      
+    in_repair::Int        
+    spares::Int          
+    history::Vector{Tuple{Float64, Int, Int, Int}}
+    repairman_busy_time::Float64
+    total_repairs::Int
+    queue_length_samples::Vector{Tuple{Float64, Int}} 
+    current_queue::Int
+    last_sample_time::Float64
+end
+
+@resumable function machine(
+    env::Environment,
+    repair_queue::Resource,
+    state::SystemState,
+    machine_id::Int,
+    rng::StableRNG
+)
+    while true
+        @yield timeout(env, rand(rng, Exponential(1/LAMBDA)))
+     
+        push!(state.history, (now(env), state.operational, state.in_repair, state.spares))
+      
+        if state.operational > 0
+            state.operational -= 1
+          
+            if state.spares > 0
+                state.spares -= 1
+                state.operational += 1
+                state.in_repair += 1 
+                push!(state.history, (now(env), state.operational, state.in_repair, state.spares))
+              
+                state.current_queue += 1
+                push!(state.queue_length_samples, (now(env), state.current_queue))
+                
+                @yield request(repair_queue)
+               
+                state.current_queue -= 1
+                push!(state.queue_length_samples, (now(env), state.current_queue))
+                
+                repair_time = rand(rng, Exponential(1/MU))
+                @yield timeout(env, repair_time)
+                @yield release(repair_queue)
+                
+                state.repairman_busy_time += repair_time
+                state.total_repairs += 1
+                
+                state.in_repair -= 1
+                state.spares += 1
+            
+                push!(state.history, (now(env), state.operational, state.in_repair, state.spares))
+            else
+                throw(StopSimulation("System crashed at $(now(env)) - out of spares"))
+            end
+        end
+    end
+end
+
+function simulate_repair(N::Int, S::Int, num_repairmen::Int; seed::Int=SEED)
+    rng = StableRNG(seed)
+    sim = Simulation()
+    
+    repair_queue = Resource(sim, num_repairmen)
+    state = SystemState(N, 0, S, Vector{Tuple{Float64, Int, Int, Int}}(), 
+                        0.0, 0, Vector{Tuple{Float64, Int}}(), 0, 0.0)
+  
+    push!(state.history, (0.0, N, 0, S))
+    push!(state.queue_length_samples, (0.0, 0))
+   
+    for i in 1:(N+S)
+        @process machine(sim, repair_queue, state, i, rng)
+    end
+    
+    try
+        run(sim, 1e6)
+        return now(sim), state
+    catch e
+        if isa(e, StopSimulation)
+            return now(sim), state
+        else
+            rethrow()
+        end
+    end
+end
+
+function hist_to_df(history::Vector{Tuple{Float64, Int, Int, Int}})
+    if isempty(history)
+        return DataFrame(time=Float64[], operational=Int[], in_repair=Int[], spares=Int[])
+    end
+    
+    times = [t for (t, _, _, _) in history]
+    operational = [op for (_, op, _, _) in history]
+    in_repair = [rep for (_, _, rep, _) in history]
+    spares = [sp for (_, _, _, sp) in history]
+    
+    return DataFrame(time=times, operational=operational, in_repair=in_repair, spares=spares)
+end
+
+function avg_queue_length(samples::Vector{Tuple{Float64, Int}})
+    if length(samples) < 2
+        return 0.0
+    end
+    
+    total_time = 0.0
+    weighted_sum = 0.0
+    
+    for i in 1:length(samples)-1
+        dt = samples[i+1][1] - samples[i][1]
+        total_time += dt
+        weighted_sum += samples[i][2] * dt
+    end
+    
+    return total_time > 0 ? weighted_sum / total_time : 0.0
+end
+
+function analytical_mttf(N::Int, S::Int, lambda::Float64, mu::Float64, c::Int)
+    total_machines = N + S
+    failure_rate = total_machines * lambda
+    service_rate = c * mu
+    
+    if service_rate <= failure_rate
+        return 1/failure_rate, 1.0, total_machines
+    end
+   
+    rho = failure_rate / service_rate
+    p0 = 1 - rho
+
+    mttf = 1/(failure_rate * p0)
+    utilization = rho
+
+    if c == 1
+        Lq = rho^2 / (1 - rho)
+    else
+        Lq = (rho^(c+1)) / (c * (1 - rho)^2) * p0
+    end
+    
+    return mttf, utilization, Lq
+end
+
+machine_configs = [(10, 3), (20, 3), (30, 3), (40, 3), (50, 3)]
+N_values = []
+sim_times = []
+sim_stds = []
+sim_utils = []
+anal_times = []
+
+for (N_val, S_val) in machine_configs
+    println("\nTesting N=$N_val, S=$S_val...")
+    crash_times = Float64[]
+    utilizations = Float64[]
+    queue_lengths = Float64[]
+    
+    for run in 1:RUNS
+        crash_time, state = simulate_repair(N_val, S_val, 1, seed=SEED + run)
+        push!(crash_times, crash_time)
+        push!(utilizations, state.repairman_busy_time / crash_time)
+        push!(queue_lengths, avg_queue_length(state.queue_length_samples))
+    end
+    
+    avg_time = mean(crash_times)
+    std_time = std(crash_times)
+    avg_util = mean(utilizations)
+    avg_queue = mean(queue_lengths)
+    
+    anal_mttf, anal_util, anal_queue = analytical_mttf(N_val, S_val, LAMBDA, MU, 1)
+    
+    push!(N_values, N_val)
+    push!(sim_times, avg_time)
+    push!(sim_stds, std_time)
+    push!(sim_utils, avg_util)
+    push!(anal_times, anal_mttf)
+    
+    println("  Simulation: $(round(avg_time, digits=2)) ± $(round(std_time, digits=2)) hours")
+    println("  Utilization: $(round(100*avg_util, digits=1))% (Analytical: $(round(100*anal_util, digits=1))%)")
+    println("  Queue length: $(round(avg_queue, digits=2)) (Analytical: $(round(anal_queue, digits=2)))")
+end
+
+p1 = plot(N_values, sim_times, 
+          linewidth=3, marker=:square, markersize=8,
+          label="Simulation",
+          xlabel="Working machines (N)", ylabel="Time to crash (hours)",
+          title="Effect of Working Machines (S=3)", color=:blue)
+plot!(p1, N_values, anal_times, linewidth=2, linestyle=:dash, label="Analytical", color=:red)
+savefig(p1, plotsdir("machine_effect.png"))
+println("\nPlot saved: ", plotsdir("machine_effect.png"))
+
+_, state_detail = simulate_repair(N, S, 1, seed=SEED)
+
+times = [t for (t, _) in state_detail.queue_length_samples]
+queues = [q for (_, q) in state_detail.queue_length_samples]
+
+p2 = plot(times, queues, linewidth=2,
+          xlabel="Time (hours)", ylabel="Queue Length",
+          title="Repair Queue Length Over Time (N=$N, S=$S, 1 repairman)",
+          label="Queue length", color=:purple)
+savefig(p2, plotsdir("queue_monitoring.png"))
+println("Queue plot saved: ", plotsdir("queue_monitoring.png"))
+
+avg_q = avg_queue_length(state_detail.queue_length_samples)
+println("Average queue length (time-weighted): $(round(avg_q, digits=3))")
+println("Total repairs completed: $(state_detail.total_repairs)")
+
+_, history_base = simulate_repair(N, S, 1, seed=SEED)
+df_status = hist_to_df(history_base.history)
+
+p3 = plot(df_status.time, df_status.operational, linewidth=2,
+          label="Working machines", xlabel="Time (hours)", ylabel="Number of machines",
+          title="Machine Status Over Time (N=$N, S=$S)", color=:blue)
+plot!(p3, df_status.time, df_status.spares, linewidth=2, label="Spare machines", color=:green)
+plot!(p3, df_status.time, df_status.in_repair, linewidth=2, label="In repair", color=:red)
+savefig(p3, plotsdir("machine_status.png"))
+println("Status plot saved: ", plotsdir("machine_status.png"))
+
+repairmen_counts = [1, 2, 3, 4, 5]
+rep_values = []
+sim_times_rep = []
+sim_stds_rep = []
+anal_times_rep = []
+
+for c in repairmen_counts
+    println("\nTesting with $c repairmen...")
+    crash_times = Float64[]
+    utils = Float64[]
+    
+    for run in 1:RUNS
+        crash, state = simulate_repair(N, S, c, seed=SEED + run*10)
+        push!(crash_times, crash)
+        push!(utils, state.repairman_busy_time / crash)
+    end
+    
+    avg_time = mean(crash_times)
+    std_time = std(crash_times)
+    avg_util = mean(utils)
+    
+    anal_mttf, anal_util, _ = analytical_mttf(N, S, LAMBDA, MU, c)
+    
+    push!(rep_values, c)
+    push!(sim_times_rep, avg_time)
+    push!(sim_stds_rep, std_time)
+    push!(anal_times_rep, anal_mttf)
+    
+    println("  Simulation: $(round(avg_time, digits=2)) ± $(round(std_time, digits=2)) hours")
+    println("  Utilization: $(round(100*avg_util, digits=1))% (Analytical: $(round(100*anal_util, digits=1))%)")
+end
+
+p4 = plot(rep_values, sim_times_rep,
+          linewidth=3, marker=:circle, markersize=8,
+          label="Simulation",
+          xlabel="Number of repairmen", ylabel="Time to crash (hours)",
+          title="Effect of Repairmen (N=$N, S=$S)", color=:blue)
+plot!(p4, rep_values, anal_times_rep, linewidth=2, linestyle=:dash, label="Analytical", color=:red)
+savefig(p4, plotsdir("repairmen_effect.png"))
+println("\nPlot saved: ", plotsdir("repairmen_effect.png"))
+
+spare_configs = [(10, 1), (10, 2), (10, 3), (10, 5), (10, 10)]
+spare_values = []
+sim_times_spare = []
+sim_stds_spare = []
+anal_times_spare = []
+
+for (N_val, S_val) in spare_configs
+    println("\nTesting N=$N_val, S=$S_val...")
+    crash_times = Float64[]
+    
+    for run in 1:RUNS
+        crash, _ = simulate_repair(N_val, S_val, 1, seed=SEED + run*100)
+        push!(crash_times, crash)
+    end
+    
+    avg_time = mean(crash_times)
+    std_time = std(crash_times)
+    anal_mttf, _, _ = analytical_mttf(N_val, S_val, LAMBDA, MU, 1)
+    
+    push!(spare_values, S_val)
+    push!(sim_times_spare, avg_time)
+    push!(sim_stds_spare, std_time)
+    push!(anal_times_spare, anal_mttf)
+    
+    println("  Simulation: $(round(avg_time, digits=2)) ± $(round(std_time, digits=2)) hours")
+    println("  Analytical: $(round(anal_mttf, digits=2)) hours")
+end
+
+p5 = plot(spare_values, sim_times_spare, linewidth=2, marker=:diamond, markersize=2,label="Simulation", xlabel="Spare machines (S)", ylabel="Time to crash (hours)",
+          title="Effect of Spare Machines (N=10)", color=:green)
+plot!(p5, spare_values, anal_times_spare, linewidth=2, linestyle=:dash, label="Analytical", color=:orange)
+savefig(p5, plotsdir("spares_effect.png"))
+println("\nPlot saved: ", plotsdir("spares_effect.png"))
+
